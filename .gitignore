@@ -1,0 +1,17 @@
+# Python virtual environments
+backend/venv/
+backend/__pycache__/
+backend/*/__pycache__/
+backend/*.pyc
+
+# Databases and local uploads
+backend/memoryverse.db
+backend/uploads/
+
+# Node dependencies
+frontend/node_modules/
+frontend/dist/
+
+# OS files
+.DS_Store
+Thumbs.db
