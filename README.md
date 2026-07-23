@@ -62,6 +62,4 @@ The backend API will run at `http://127.0.0.1:8000`.
 
 The app will launch at `http://localhost:3001` (or `http://localhost:3000` depending on port availability).
 
-### 🔑 Demo Credentials
-- **Username**: `arasu`
-- **Password**: `password`
+
