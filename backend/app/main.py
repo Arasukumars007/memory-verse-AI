@@ -579,6 +579,53 @@ def get_timeline(db: Session = Depends(get_db)):
         })
     return timeline
 
+# Category keyword detection map
+CATEGORY_KEYWORDS = {
+    "Certificate": ["certificate", "certificates", "certification", "certifications", "certified", "cert"],
+    "Internship": ["internship", "internships", "intern", "interns"],
+    "Project": ["project", "projects"],
+    "Achievement": ["achievement", "achievements", "award", "awards", "honor", "honours"],
+    "Academic": ["academic", "academics", "degree", "education", "course", "semester"],
+    "Resume": ["resume", "cv"],
+}
+
+# Direct category filter endpoint
+@app.get("/api/documents/filter")
+def filter_documents(category: Optional[str] = None, db: Session = Depends(get_db)):
+    """
+    Return all documents matching a given category name.
+    If no category provided, returns all documents.
+    """
+    q = db.query(models.Document)
+    if category:
+        # Match both singular and plural forms
+        cat_lower = category.lower()
+        matched_cat = None
+        for canonical, keywords in CATEGORY_KEYWORDS.items():
+            if cat_lower in keywords or cat_lower == canonical.lower():
+                matched_cat = canonical
+                break
+        if matched_cat:
+            # Match both "Certificate" and "Certifications" style variants
+            alt = matched_cat + "s" if not matched_cat.endswith("s") else matched_cat[:-1]
+            q = q.filter(
+                (models.Document.category == matched_cat) | 
+                (models.Document.category == alt)
+            )
+    docs = q.all()
+    return [
+        {
+            "id": d.id,
+            "filename": d.filename,
+            "category": d.category,
+            "year": d.year,
+            "summary": d.summary,
+            "file_path": d.file_path,
+            "extracted_text": d.extracted_text,
+            "skills": [s.name for s in d.skills]
+        } for d in docs
+    ]
+
 # Smart Retrieval Search
 @app.post("/api/search")
 def search_documents(payload: dict, x_gemini_key: Optional[str] = Header(None), db: Session = Depends(get_db)):
@@ -586,29 +633,89 @@ def search_documents(payload: dict, x_gemini_key: Optional[str] = Header(None), 
     if not query:
         return []
 
+    q_lower = query.lower().strip()
     results = []
-    
-    # Check if we should use vector search via Gemini Embeddings
+    category_docs = []
+
+    # ── Step 1: Detect category keywords in query ──────────────────────────
+    detected_category = None
+    for canonical, keywords in CATEGORY_KEYWORDS.items():
+        if any(kw in q_lower for kw in keywords):
+            detected_category = canonical
+            break
+
+    if detected_category:
+        # Pull all documents matching this category from DB
+        alt = detected_category + "s" if not detected_category.endswith("s") else detected_category[:-1]
+        category_docs = db.query(models.Document).filter(
+            (models.Document.category == detected_category) |
+            (models.Document.category == alt)
+        ).all()
+
+    # ── Step 2: Vector search (Gemini Embeddings) ──────────────────────────
     if x_gemini_key and len(x_gemini_key.strip()) > 10:
         query_emb = search.get_gemini_embedding(x_gemini_key, query)
         if query_emb:
-            # Match against cached document embeddings
             scores = []
             for doc_id, emb in gemini_embeddings_cache.items():
                 sim = search.cosine_similarity(query_emb, emb)
-                if sim > 0.1:
+                if sim > 0.05:
                     scores.append((doc_id, sim))
             scores.sort(key=lambda x: x[1], reverse=True)
             results = scores
-    
-    # Fallback/default: TF-IDF Search
+
+    # ── Step 3: TF-IDF fallback ────────────────────────────────────────────
     if not results:
         results = local_index.search(query)
 
+    # ── Step 4: Merge category docs + scored results ───────────────────────
+    seen_ids = set()
     search_hits = []
+
+    # First: add category-matched docs with a high base score
+    for doc in category_docs:
+        seen_ids.add(doc.id)
+        # Check if there's also a TF-IDF/vector score for this doc
+        extra_score = next((s for did, s in results if did == doc.id), 0)
+        # Build remaining query terms (remove category words) for skill/keyword matching
+        remaining_terms = [w for w in q_lower.split() if w not in [
+            'show', 'all', 'my', 'list', 'get', 'find', 'display', 'give', 'me',
+        ] + (CATEGORY_KEYWORDS.get(detected_category, []))] if detected_category else []
+        
+        # Boost score if doc matches remaining terms
+        bonus = 0
+        if remaining_terms:
+            doc_text = f"{doc.filename} {doc.summary} {doc.extracted_text} " + " ".join(
+                s.name for s in doc.skills
+            )
+            doc_text_lower = doc_text.lower()
+            matched_terms = sum(1 for t in remaining_terms if t in doc_text_lower)
+            bonus = matched_terms / max(len(remaining_terms), 1)
+            # If we have remaining terms and none match, reduce score
+            score = 0.6 + bonus * 0.35 + extra_score * 0.05
+        else:
+            # Pure category query - all docs in category are equally relevant
+            score = 0.85 + extra_score * 0.15
+
+        search_hits.append({
+            "id": doc.id,
+            "filename": doc.filename,
+            "category": doc.category,
+            "year": doc.year,
+            "summary": doc.summary,
+            "file_path": doc.file_path,
+            "extracted_text": doc.extracted_text,
+            "skills": [s.name for s in doc.skills],
+            "score": min(round(score * 100), 99)
+        })
+
+    # Then: add TF-IDF/vector results not already included
     for doc_id, score in results:
+        if doc_id in seen_ids:
+            continue
         doc = db.query(models.Document).filter(models.Document.id == doc_id).first()
         if doc:
+            seen_ids.add(doc.id)
             search_hits.append({
                 "id": doc.id,
                 "filename": doc.filename,
@@ -618,9 +725,11 @@ def search_documents(payload: dict, x_gemini_key: Optional[str] = Header(None), 
                 "file_path": doc.file_path,
                 "extracted_text": doc.extracted_text,
                 "skills": [s.name for s in doc.skills],
-                "score": round(score * 100) # percentage match
+                "score": round(score * 100)
             })
-            
+
+    # Sort by score descending
+    search_hits.sort(key=lambda x: x["score"], reverse=True)
     return search_hits
 
 # Serve React Frontend Build (SPA fallback)

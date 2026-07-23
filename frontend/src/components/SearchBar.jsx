@@ -2,10 +2,12 @@ import { useState } from 'react'
 import { API_URL } from '../api'
 
 const SUGGESTIONS = [
-  'Show all certificates',
-  'Python projects',
-  'Internship letters',
-  'Skills from 2024',
+  { label: 'All Certificates', query: 'Show all certificates' },
+  { label: 'Python Projects', query: 'Python projects' },
+  { label: 'All Internships', query: 'Show all internships' },
+  { label: 'All Projects',    query: 'Show all projects' },
+  { label: 'Achievements',    query: 'Show all achievements' },
+  { label: 'Academic Docs',  query: 'Show all academic documents' },
 ]
 
 const CAT_COLORS = {
@@ -101,11 +103,11 @@ export default function SearchBar({ geminiKey, onViewDoc }) {
             <span className="suggest-label">Suggested Queries:</span>
             {SUGGESTIONS.map(s => (
               <button
-                key={s}
+                key={s.label}
                 className="suggest-btn"
-                onClick={() => { setQuery(`Show ${s.toLowerCase()}`); handleSearch(`Show ${s.toLowerCase()}`) }}
+                onClick={() => { setQuery(s.query); handleSearch(s.query) }}
               >
-                "{s}"
+                {s.label}
               </button>
             ))}
           </div>
