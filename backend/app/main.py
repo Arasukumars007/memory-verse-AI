@@ -122,6 +122,10 @@ def rebuild_all_relationships(db: Session):
 
 @app.on_event("startup")
 def startup_event():
+    # Log DB path so we can confirm persistence in Railway logs
+    from .database import _DB_PATH
+    print(f"[MemoryVerse] Database path: {_DB_PATH}", flush=True)
+
     # Sync SQLite documents with TF-IDF search index and rebuild relationships
     db = next(get_db())
     try:
@@ -129,6 +133,26 @@ def startup_event():
         for doc in docs:
             local_index.index_document(doc.id, f"{doc.filename} {doc.category} {doc.extracted_text}")
         rebuild_all_relationships(db)
+
+        # ── Seed default admin user from environment variables ─────────────
+        # Set ADMIN_USERNAME and ADMIN_PASSWORD in Railway Variables tab.
+        # This user is created automatically if it doesn't exist yet.
+        admin_username = os.environ.get("ADMIN_USERNAME", "").strip()
+        admin_password = os.environ.get("ADMIN_PASSWORD", "").strip()
+        if admin_username and admin_password:
+            existing = db.query(models.User).filter(models.User.username == admin_username).first()
+            if not existing:
+                hashed_pwd, salt = auth.hash_password(admin_password)
+                seed_user = models.User(
+                    username=admin_username,
+                    hashed_password=hashed_pwd,
+                    salt=salt
+                )
+                db.add(seed_user)
+                db.commit()
+                print(f"[MemoryVerse] Seeded admin user '{admin_username}'", flush=True)
+            else:
+                print(f"[MemoryVerse] Admin user '{admin_username}' already exists", flush=True)
     finally:
         db.close()
 

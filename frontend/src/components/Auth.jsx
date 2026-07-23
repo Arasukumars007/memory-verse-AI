@@ -55,6 +55,8 @@ export default function Auth({ onLogin }) {
       const data = await res.json()
       if (res.ok && data.status === 'success' && data.token) {
         runDecryptAnimation(() => onLogin(data.token, username))
+      } else if (res.status === 401) {
+        setError('Invalid credentials. If you registered before, the server may have restarted and reset accounts — please register again.')
       } else {
         setError(data.detail || 'Invalid username or password.')
       }
