@@ -1,65 +1,82 @@
 # MemoryVerse AI — Intelligent Digital Identity System
 
-MemoryVerse AI is a next-generation full-stack digital identity system designed for hackathon showcases. It moves beyond standard folder storage to organize a student's academic and career accomplishments into an **interactive knowledge graph** and a **chronological growth timeline** with **natural language semantic search**.
+MemoryVerse AI is a next-generation full-stack digital identity system designed for hackathons and academic showcases. It transforms student accomplishments into an **interactive knowledge graph**, a **chronological growth timeline**, and an **AI-powered semantic search engine**.
 
 ---
 
-## ⚡ Key Features
+## 🌐 Live Application & Access Links
 
-1. **Futuristic Security Gateway (Auth Card)**: Encrypted logins guarded by progressive cybersecurity decryption status visualizations.
-2. **Auto-Organize / Document Categorization**: Automatically extracts text, identifies keywords/skills, determines categories (`Resume`, `Certificate`, `Internship`, `Project`, `Achievement`, `Academic`), and resolves years using heuristics or true LLM parsing.
-3. **Interactive Knowledge Graph (Force-Directed Simulation)**: Color-coded nodes linking skills, certificates, and projects together in an HTML5 canvas simulation with dragging, scroll zooming, and hover state inspection.
-4. **Growth Timeline**: A chronological growth roadmap tracking accomplishments year-by-year with quick category toggle filters.
-5. **Semantic Retrieval**: Natural language search query parser running cosine similarity scores against local TF-IDF matrices (or true multi-modal vector embeddings if upgraded).
-6. **Gemini AI Multi-Modal Upgrade**: Built-in API Key section allowing a simple key drop-in to upgrade Heuristics to state-of-the-art Generative AI parsing and true vector embeddings.
+- **Live Application**: [https://memory-verse-ai-production.up.railway.app/](https://memory-verse-ai-production.up.railway.app/)
+- **Interactive API Swagger Docs**: [https://memory-verse-ai-production.up.railway.app/docs](https://memory-verse-ai-production.up.railway.app/docs)
+- **GitHub Repository**: [https://github.com/Arasukumars007/memory-verse-AI](https://github.com/Arasukumars007/memory-verse-AI)
+
+---
+
+## 🔑 Test Credentials
+
+- **Sign Up / Register**: Click **"Don't have an account? Sign Up"** on the login screen to register any custom username & password.
+- **Pre-created Demo Credentials**:
+  - **Username**: `arasu_admin`
+  - **Password**: `MemoryVerse2026!`
+
+---
+
+## ⚡ Key Features & Innovations
+
+1. **Futuristic Security Gateway**: Salted & hashed passwords (`PBKDF2-HMAC-SHA256`) with signed token session authorization (`Bearer <token>`).
+2. **Auto-Organize & Entity Extraction**: Automatically extracts text, identifies keywords/skills, determines categories (`Resume`, `Certificate`, `Internship`, `Project`, `Achievement`, `Academic`), and resolves dates.
+3. **Interactive Force-Directed Knowledge Graph**: HTML5 canvas simulation displaying nodes for documents, skills, and matching career paths with interactive drag, zoom, and inspection capabilities.
+4. **Growth Timeline**: Year-by-year chronological roadmap tracking achievements with category filters.
+5. **Semantic Search & Retrieval**: TF-IDF Vector Space search engine with Cosine Similarity scoring.
+6. **Gemini Multi-Modal AI Upgrade**: Optional API key drop-in to upgrade heuristics to structured LLM entity parsing and `text-embedding-004` vector embeddings.
 
 ---
 
 ## 🛠️ Technology Stack
 
-- **Frontend**: React.js, Vite, Vanilla CSS (Premium Glassmorphic styling with micro-animations).
-- **Backend**: FastAPI, Python 3.13, SQLite, SQLAlchemy.
-- **AI/NLP**: Heuristic tokenizers, stopword filtering, numpy-accelerated Cosine Similarity search, and Google Gemini API integration.
+- **Frontend**: React.js, Vite, Vanilla CSS3 (Glassmorphism design system & micro-animations), HTML5 Canvas.
+- **Backend**: Python 3.11+, FastAPI, Uvicorn, SQLite3, SQLAlchemy ORM.
+- **Security**: `hashlib.pbkdf2_hmac` password salting & hashing, Signed session authorization tokens.
+- **AI/NLP**: `pypdf`, TF-IDF vectorizer, Cosine Similarity engine, Google Gemini 1.5 Flash API.
+- **DevOps**: Docker (Multi-stage build), Railway, Git/GitHub.
 
 ---
 
-## 🚀 How to Run the Project
+## 💡 Architecture & Design Decisions
+
+- **Single-Domain Deployment**: Multi-stage Docker build compiles the Vite React Single-Page Application (`frontend/dist`) and embeds it directly into FastAPI, serving both UI and API endpoints from a single domain (`https://memory-verse-ai-production.up.railway.app/`).
+- **Cryptographic Security**: Passwords are salted and hashed with PBKDF2-HMAC-SHA256, protecting user accounts against plain-text vulnerabilities and unauthorized access.
+- **Automated Database Migrations**: `migrate_db()` function automatically executes column schema updates on startup.
+
+---
+
+## 🚀 Setup & Running Instructions
 
 ### Prerequisites
-- Python 3.13+
-- Node.js v24+
+- Python 3.10+
+- Node.js v18+
 
-### 1. Launch the Backend Server
-1. Navigate to the `backend` directory:
-   ```bash
-   cd backend
-   ```
-2. Activate the virtual environment:
-   - On Windows:
-     ```powershell
-     .\venv\Scripts\activate
-     ```
-   - On Mac/Linux:
-     ```bash
-     source venv/bin/activate
-     ```
-3. Start the FastAPI uvicorn server:
-   ```bash
-   python -m uvicorn app.main:app --port 8000 --host 127.0.0.1 --reload
-   ```
+### 1. Launch Backend Server
+```bash
+git clone https://github.com/Arasukumars007/memory-verse-AI.git
+cd memory-verse-AI/backend
 
-The backend API will run at `http://127.0.0.1:8000`.
+# Install dependencies
+pip install -r requirements.txt
 
-### 2. Launch the Frontend Dev Server
-1. Open a new terminal in the `frontend` directory:
-   ```bash
-   cd frontend
-   ```
-2. Start the Vite React development server:
-   ```bash
-   npm run dev
-   ```
+# Start FastAPI Uvicorn Server
+python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
+```
+*Backend API will run at `http://127.0.0.1:8000`.*
 
-The app will launch at `http://localhost:3001` (or `http://localhost:3000` depending on port availability).
+### 2. Launch Frontend Dev Server
+```bash
+cd frontend
 
+# Install Node dependencies
+npm install
 
+# Start Vite React Development Server
+npm run dev
+```
+*Frontend app will launch at `http://localhost:3000`.*
