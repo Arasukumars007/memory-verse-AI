@@ -2,6 +2,7 @@ import os
 import time
 import shutil
 from fastapi import FastAPI, Depends, UploadFile, File, Form, Header, HTTPException, status
+from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
@@ -621,3 +622,22 @@ def search_documents(payload: dict, x_gemini_key: Optional[str] = Header(None), 
             })
             
     return search_hits
+
+# Serve React Frontend Build (SPA fallback)
+PROJECT_ROOT = os.path.dirname(BASE_DIR)
+DIST_DIR = os.path.join(PROJECT_ROOT, "frontend", "dist")
+
+if os.path.exists(DIST_DIR):
+    assets_dir = os.path.join(DIST_DIR, "assets")
+    if os.path.exists(assets_dir):
+        app.mount("/assets", StaticFiles(directory=assets_dir), name="frontend_assets")
+
+    @app.get("/{full_path:path}")
+    async def serve_spa(full_path: str):
+        if full_path.startswith("api/") or full_path.startswith("docs") or full_path.startswith("openapi.json"):
+            raise HTTPException(status_code=404, detail="API route not found")
+        file_path = os.path.join(DIST_DIR, full_path)
+        if os.path.exists(file_path) and os.path.isfile(file_path):
+            return FileResponse(file_path)
+        return FileResponse(os.path.join(DIST_DIR, "index.html"))
+
