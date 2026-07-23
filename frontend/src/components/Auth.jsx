@@ -1,4 +1,5 @@
 import { useState, useRef } from 'react'
+import { API_URL } from '../api'
 
 export default function Auth({ onLogin }) {
   const [isRegisterMode, setIsRegisterMode] = useState(false)
@@ -41,19 +42,24 @@ export default function Auth({ onLogin }) {
     const password = document.getElementById('authPassword').value
     if (!username || !password) { setError('Please fill in all fields.'); return }
     try {
-      const res = await fetch('/api/auth/login', {
+      const res = await fetch(`${API_URL}/api/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username, password }),
       })
-      if (res.ok) {
-        runDecryptAnimation(onLogin)
+      const contentType = res.headers.get('content-type') || ''
+      if (!contentType.includes('application/json')) {
+        setError('Cannot verify credentials: Server returned invalid content. Please ensure backend is running.')
+        return
+      }
+      const data = await res.json()
+      if (res.ok && data.status === 'success' && data.token) {
+        runDecryptAnimation(() => onLogin(data.token, username))
       } else {
-        const data = await res.json().catch(() => ({}))
         setError(data.detail || 'Invalid username or password.')
       }
     } catch {
-      setError('Cannot connect to server. Make sure the backend is running.')
+      setError('Cannot connect to server. Make sure the backend server is running.')
     }
   }
 
@@ -65,12 +71,18 @@ export default function Auth({ onLogin }) {
     const password = document.getElementById('regPassword').value
     if (!username || !email || !password) { setError('Please fill in all fields.'); return }
     try {
-      const res = await fetch('/api/auth/register', {
+      const res = await fetch(`${API_URL}/api/auth/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username, email, password }),
       })
-      if (res.ok) {
+      const contentType = res.headers.get('content-type') || ''
+      if (!contentType.includes('application/json')) {
+        setError('Registration failed: Server returned invalid content. Please ensure backend is running.')
+        return
+      }
+      const data = await res.json()
+      if (res.ok && data.status === 'success') {
         setError('')
         setIsRegisterMode(false)
         setTimeout(() => {
@@ -78,7 +90,6 @@ export default function Auth({ onLogin }) {
           if (el) el.value = username
         }, 100)
       } else {
-        const data = await res.json().catch(() => ({}))
         setError(data.detail || 'Registration failed.')
       }
     } catch {

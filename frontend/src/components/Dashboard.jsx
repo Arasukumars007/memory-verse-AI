@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { API_URL } from '../api'
 
 const CAT_META = {
   Resume:         { icon: 'fa-file-user',      color: 'var(--accent-cyan)',     cls: 'cat-resume' },
@@ -23,7 +24,7 @@ export default function Dashboard({ documents, onDelete, onNavigate, onViewDoc }
   useEffect(() => {
     async function loadPaths() {
       try {
-        const res = await fetch('/api/career-path')
+        const res = await fetch(`${API_URL}/api/career-path`)
         const data = await res.json()
         setCareerPaths(data)
       } catch {

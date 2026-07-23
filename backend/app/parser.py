@@ -2,10 +2,13 @@ import re
 import datetime
 import json
 import requests
-from pypdf import PdfReader
 from io import BytesIO
 
-# A predefined list of common skills to look for using heuristics
+try:
+    from pypdf import PdfReader
+except ImportError:
+    PdfReader = None
+
 KNOWN_SKILLS = [
     "Python", "Machine Learning", "NLP", "RAG", "Embeddings", "Vector Databases", "Semantic Search",
     "Javascript", "HTML Canvas", "Algorithms", "Data Structures", "Leadership", "Data Science", "APIs",
@@ -15,6 +18,12 @@ KNOWN_SKILLS = [
 ]
 
 def extract_text_from_pdf(file_bytes: bytes) -> str:
+    if not PdfReader:
+        try:
+            return file_bytes.decode("utf-8", errors="ignore")
+        except Exception:
+            return "PDF content"
+
     try:
         reader = PdfReader(BytesIO(file_bytes))
         text = ""
@@ -132,3 +141,32 @@ def call_gemini_parser(api_key: str, filename: str, text: str) -> dict:
     
     # Fallback to heuristics
     return classify_heuristics(filename, text)
+
+def fetch_url_content(url: str) -> dict:
+    """
+    Fetch text content and title from a web URL for document ingestion.
+    """
+    if not url.startswith("http://") and not url.startswith("https://"):
+        url = "https://" + url
+
+    try:
+        resp = requests.get(url, timeout=10, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
+        if resp.status_code == 200:
+            html = resp.text
+            # Extract basic title
+            title_match = re.search(r'<title>(.*?)</title>', html, re.IGNORECASE | re.DOTALL)
+            title = title_match.group(1).strip() if title_match else url.split("/")[-1] or url
+            
+            # Clean HTML tags to get text
+            text = re.sub(r'<script.*?>.*?</script>', '', html, flags=re.DOTALL | re.IGNORECASE)
+            text = re.sub(r'<style.*?>.*?</style>', '', text, flags=re.DOTALL | re.IGNORECASE)
+            text = re.sub(r'<[^>]+>', ' ', text)
+            text = re.sub(r'\s+', ' ', text).strip()
+            return {"title": title, "text": text[:5000], "url": url}
+    except Exception as e:
+        print(f"Error fetching URL content: {e}")
+
+    # Fallback title & text
+    domain = url.split("//")[-1].split("/")[0]
+    return {"title": f"Resource from {domain}", "text": f"Online resource link: {url}", "url": url}
+

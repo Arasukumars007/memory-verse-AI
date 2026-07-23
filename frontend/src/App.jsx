@@ -6,6 +6,7 @@ import Timeline from './components/Timeline'
 import KnowledgeGraph from './components/KnowledgeGraph'
 import SearchBar from './components/SearchBar'
 import Config from './components/Config'
+import { API_URL } from './api'
 
 const NAV_ITEMS = [
   { key: 'dashboard', label: 'Dashboard',        icon: 'fa-chart-line' },
@@ -116,6 +117,9 @@ export default function App() {
   const [toast, setToast] = useState(null)
   const [activeDocView, setActiveDocView] = useState(null)
 
+  const [token, setToken] = useState(() => sessionStorage.getItem('mv_auth_token') || '')
+  const [username, setUsername] = useState(() => sessionStorage.getItem('mv_username') || '')
+
   const showToast = (msg, type = 'success') => {
     setToast({ msg, type })
     setTimeout(() => setToast(null), 3500)
@@ -123,7 +127,10 @@ export default function App() {
 
   const fetchDocs = useCallback(async () => {
     try {
-      const res = await fetch('/api/documents')
+      const headers = {}
+      const curToken = sessionStorage.getItem('mv_auth_token')
+      if (curToken) headers['Authorization'] = `Bearer ${curToken}`
+      const res = await fetch(`${API_URL}/api/documents`, { headers })
       const data = await res.json()
       setDocuments(Array.isArray(data) ? data : [])
     } catch { /* server not reachable */ }
@@ -131,17 +138,42 @@ export default function App() {
 
   useEffect(() => { if (authed) fetchDocs() }, [authed, fetchDocs])
 
-  const handleLogin = () => { sessionStorage.setItem('mv_auth', '1'); setAuthed(true) }
-  const handleLogout = () => { sessionStorage.removeItem('mv_auth'); setAuthed(false) }
+  const handleLogin = (userToken, uname) => {
+    sessionStorage.setItem('mv_auth', '1')
+    if (userToken) sessionStorage.setItem('mv_auth_token', userToken)
+    if (uname) sessionStorage.setItem('mv_username', uname)
+    setToken(userToken || '')
+    setUsername(uname || '')
+    setAuthed(true)
+  }
+  
+  const handleLogout = () => {
+    sessionStorage.removeItem('mv_auth')
+    sessionStorage.removeItem('mv_auth_token')
+    sessionStorage.removeItem('mv_username')
+    setToken('')
+    setUsername('')
+    setAuthed(false)
+  }
 
   const handleDocumentAdded = (doc) => {
-    setDocuments(prev => [...prev, doc])
-    showToast(`"${doc.filename}" ingested as ${doc.category}`)
+    if (!doc) return
+    setDocuments(prev => {
+      const exists = prev.some(d => d.id === doc.id)
+      if (exists) {
+        return prev.map(d => d.id === doc.id ? doc : d)
+      }
+      return [...prev, doc]
+    })
+    showToast(`"${doc.filename || doc.title || 'Document'}" stored in MemoryVerse`)
   }
 
   const handleDeleteDoc = async (id) => {
     try {
-      await fetch(`/api/documents/${id}`, { method: 'DELETE' })
+      const headers = {}
+      const curToken = sessionStorage.getItem('mv_auth_token')
+      if (curToken) headers['Authorization'] = `Bearer ${curToken}`
+      await fetch(`${API_URL}/api/documents/${id}`, { method: 'DELETE', headers })
       setDocuments(prev => prev.filter(d => d.id !== id))
       showToast('Document removed', 'success')
     } catch { showToast('Failed to delete', 'error') }
@@ -154,8 +186,11 @@ export default function App() {
 
   const handleReset = async () => {
     try {
+      const headers = {}
+      const curToken = sessionStorage.getItem('mv_auth_token')
+      if (curToken) headers['Authorization'] = `Bearer ${curToken}`
       for (const d of documents) {
-        await fetch(`/api/documents/${d.id}`, { method: 'DELETE' })
+        await fetch(`${API_URL}/api/documents/${d.id}`, { method: 'DELETE', headers })
       }
       setDocuments([])
       showToast('System reset — all records cleared', 'success')

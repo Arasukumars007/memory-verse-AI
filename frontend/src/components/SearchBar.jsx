@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { API_URL } from '../api'
 
 const SUGGESTIONS = [
   'Show all certificates',
@@ -47,7 +48,7 @@ export default function SearchBar({ geminiKey, onViewDoc }) {
     try {
       const headers = { 'Content-Type': 'application/json' }
       if (geminiKey) headers['x-gemini-key'] = geminiKey
-      const res = await fetch('/api/search', {
+      const res = await fetch(`${API_URL}/api/search`, {
         method: 'POST',
         headers,
         body: JSON.stringify({ query: q }),

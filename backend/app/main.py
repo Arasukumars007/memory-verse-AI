@@ -9,10 +9,27 @@ from typing import Optional, List
 import json
 
 from .database import engine, Base, get_db
-from . import models, parser, search
+from . import models, parser, search, auth
 
-# Initialize tables
+# Initialize tables and migrate schema if needed
 Base.metadata.create_all(bind=engine)
+
+def migrate_db():
+    with engine.connect() as conn:
+        from sqlalchemy import text
+        for col, col_type in [
+            ("email", "VARCHAR(255)"),
+            ("hashed_password", "VARCHAR(255)"),
+            ("salt", "VARCHAR(100)"),
+            ("created_at", "DATETIME")
+        ]:
+            try:
+                conn.execute(text(f"ALTER TABLE users ADD COLUMN {col} {col_type}"))
+                conn.commit()
+            except Exception:
+                pass
+
+migrate_db()
 
 # Create uploads directory relative to backend folder
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -117,38 +134,77 @@ def startup_event():
 # Authentication Endpoints
 @app.post("/api/auth/register")
 def register(payload: dict, db: Session = Depends(get_db)):
-    username = payload.get("username")
-    password = payload.get("password")
+    username = payload.get("username", "").strip()
+    email = payload.get("email", "").strip()
+    password = payload.get("password", "")
+    
     if not username or not password:
         raise HTTPException(status_code=400, detail="Username and password are required")
+    if len(username) < 3:
+        raise HTTPException(status_code=400, detail="Username must be at least 3 characters long")
+    if len(password) < 4:
+        raise HTTPException(status_code=400, detail="Password must be at least 4 characters long")
     
     existing = db.query(models.User).filter(models.User.username == username).first()
     if existing:
-        raise HTTPException(status_code=400, detail="Username already registered")
+        raise HTTPException(status_code=400, detail="Username is already registered")
         
-    db_user = models.User(username=username, password=password)
+    if email:
+        existing_email = db.query(models.User).filter(models.User.email == email).first()
+        if existing_email:
+            raise HTTPException(status_code=400, detail="Email is already registered")
+        
+    hashed_pwd, salt = auth.hash_password(password)
+    db_user = models.User(
+        username=username,
+        email=email or None,
+        hashed_password=hashed_pwd,
+        salt=salt
+    )
     db.add(db_user)
     db.commit()
-    return {"status": "success", "message": "Key created successfully"}
+    return {"status": "success", "message": "Account created successfully"}
 
 @app.post("/api/auth/login")
 def login(payload: dict, db: Session = Depends(get_db)):
-    username = payload.get("username")
-    password = payload.get("password")
+    username = payload.get("username", "").strip()
+    password = payload.get("password", "")
     
-    # 1. Check default credentials
-    if username == "arasu" and password == "password":
-        return {"status": "success", "token": "cyber-jwt-session-token"}
+    if not username or not password:
+        raise HTTPException(status_code=400, detail="Username and password are required")
         
-    # 2. Check registered credentials in database
     db_user = db.query(models.User).filter(models.User.username == username).first()
-    if db_user and db_user.password == password:
-        return {"status": "success", "token": "cyber-jwt-session-token"}
+    if not db_user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid username or password credentials"
+        )
+    
+    authenticated = False
+    # Check hashed password
+    if db_user.hashed_password and db_user.salt:
+        authenticated = auth.verify_password(password, db_user.hashed_password, db_user.salt)
+    elif db_user.password:
+        # Legacy plain password fallback - automatically upgrade to hash
+        if db_user.password == password:
+            authenticated = True
+            h_pwd, s_val = auth.hash_password(password)
+            db_user.hashed_password = h_pwd
+            db_user.salt = s_val
+            db.commit()
+
+    if not authenticated:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid username or password credentials"
+        )
         
-    raise HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Unauthorized security key or password credentials"
-    )
+    token = auth.generate_token(username)
+    return {
+        "status": "success",
+        "token": token,
+        "username": username
+    }
 
 
 # Document Ingestion Endpoint
@@ -157,9 +213,11 @@ async def upload_document(
     file: Optional[UploadFile] = File(None),
     raw_text: Optional[str] = Form(None),
     filename_override: Optional[str] = Form(None),
+    gemini_key: Optional[str] = Form(None),
     x_gemini_key: Optional[str] = Header(None),
     db: Session = Depends(get_db)
 ):
+    api_key = x_gemini_key or gemini_key
     extracted_text = ""
     filename = filename_override or "Unnamed Document"
     saved_file_path = None
@@ -170,7 +228,6 @@ async def upload_document(
         file_bytes = await file.read()
         
         # Save file to uploads directory
-        # Sanitize filename: keep only safe characters
         safe_filename = "".join([c for c in filename if c.isalnum() or c in "._-"])
         if not safe_filename:
             safe_filename = "document"
@@ -185,20 +242,19 @@ async def upload_document(
             print(f"Error saving uploaded file: {e}")
         
         # Read text or PDF
-        if filename.endswith(".pdf"):
+        if filename.lower().endswith(".pdf"):
             extracted_text = parser.extract_text_from_pdf(file_bytes)
         else:
             try:
                 extracted_text = file_bytes.decode("utf-8")
             except Exception:
-                extracted_text = f"Binary content of {filename}"
+                extracted_text = f"Content of file: {filename}"
     elif raw_text:
         extracted_text = raw_text
 
     # 2. Extract entities and classify
-    # If Gemini key is provided, use structured LLM parser, else use heuristics
-    if x_gemini_key and len(x_gemini_key.strip()) > 10:
-        meta = parser.call_gemini_parser(x_gemini_key, filename, extracted_text)
+    if api_key and len(api_key.strip()) > 10:
+        meta = parser.call_gemini_parser(api_key, filename, extracted_text)
     else:
         meta = parser.classify_heuristics(filename, extracted_text)
         
@@ -237,25 +293,146 @@ async def upload_document(
     local_index.index_document(db_doc.id, doc_search_text)
 
     # 5. Handle Gemini embeddings if key provided
-    if x_gemini_key and len(x_gemini_key.strip()) > 10:
-        emb = search.get_gemini_embedding(x_gemini_key, doc_search_text)
+    if api_key and len(api_key.strip()) > 10:
+        emb = search.get_gemini_embedding(api_key, doc_search_text)
         if emb:
             gemini_embeddings_cache[db_doc.id] = emb
 
     rebuild_all_relationships(db)
 
+    doc_data = {
+        "id": db_doc.id,
+        "filename": db_doc.filename,
+        "category": db_doc.category,
+        "year": db_doc.year,
+        "summary": db_doc.summary,
+        "file_path": db_doc.file_path,
+        "extracted_text": db_doc.extracted_text,
+        "skills": [s.name for s in db_doc.skills]
+    }
+
     return {
         "status": "success",
-        "document": {
-            "id": db_doc.id,
-            "filename": db_doc.filename,
-            "category": db_doc.category,
-            "year": db_doc.year,
-            "summary": db_doc.summary,
-            "file_path": db_doc.file_path,
-            "extracted_text": db_doc.extracted_text,
-            "skills": [s.name for s in db_doc.skills]
-        }
+        "document": doc_data,
+        **doc_data  # Top-level fields for direct access compatibility
+    }
+
+# URL Document Ingestion Endpoint
+@app.post("/api/documents/url")
+def ingest_url(payload: dict, x_gemini_key: Optional[str] = Header(None), db: Session = Depends(get_db)):
+    url = payload.get("url", "").strip()
+    if not url:
+        raise HTTPException(status_code=400, detail="URL is required")
+        
+    url_data = parser.fetch_url_content(url)
+    filename = url_data.get("title", url)
+    extracted_text = url_data.get("text", f"Online resource: {url}")
+
+    if x_gemini_key and len(x_gemini_key.strip()) > 10:
+        meta = parser.call_gemini_parser(x_gemini_key, filename, extracted_text)
+    else:
+        meta = parser.classify_heuristics(filename, extracted_text)
+
+    category = meta.get("category", "Project")
+    year = meta.get("year", 2026)
+    skills_list = meta.get("skills", [])
+    summary = meta.get("summary", f"Imported resource from {url}")
+
+    db_doc = models.Document(
+        filename=filename,
+        category=category,
+        file_path=url,
+        extracted_text=extracted_text,
+        summary=summary,
+        year=year
+    )
+    db.add(db_doc)
+    db.commit()
+    db.refresh(db_doc)
+
+    for skill_name in skills_list:
+        db_skill = db.query(models.Skill).filter(models.Skill.name == skill_name).first()
+        if not db_skill:
+            db_skill = models.Skill(name=skill_name)
+            db.add(db_skill)
+            db.commit()
+            db.refresh(db_skill)
+        db_doc.skills.append(db_skill)
+    db.commit()
+
+    doc_search_text = f"{filename} {category} {summary} {extracted_text} " + " ".join(skills_list)
+    local_index.index_document(db_doc.id, doc_search_text)
+
+    rebuild_all_relationships(db)
+
+    doc_data = {
+        "id": db_doc.id,
+        "filename": db_doc.filename,
+        "category": db_doc.category,
+        "year": db_doc.year,
+        "summary": db_doc.summary,
+        "file_path": db_doc.file_path,
+        "extracted_text": db_doc.extracted_text,
+        "skills": [s.name for s in db_doc.skills]
+    }
+
+    return {
+        "status": "success",
+        "document": doc_data,
+        **doc_data
+    }
+
+# Update Document Metadata Endpoint
+@app.patch("/api/documents/{doc_id}")
+def update_document(doc_id: int, payload: dict, db: Session = Depends(get_db)):
+    doc = db.query(models.Document).filter(models.Document.id == doc_id).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+        
+    if "title" in payload or "filename" in payload:
+        doc.filename = payload.get("title") or payload.get("filename")
+    if "category" in payload:
+        doc.category = payload["category"]
+    if "year" in payload:
+        doc.year = int(payload["year"])
+    if "content" in payload or "extracted_text" in payload:
+        doc.extracted_text = payload.get("content") or payload.get("extracted_text")
+    if "summary" in payload:
+        doc.summary = payload["summary"]
+
+    if "skills" in payload:
+        skills_input = payload["skills"]
+        if isinstance(skills_input, str):
+            skills_list = [s.strip() for s in skills_input.split(",") if s.strip()]
+        else:
+            skills_list = skills_input
+            
+        doc.skills.clear()
+        for skill_name in skills_list:
+            db_skill = db.query(models.Skill).filter(models.Skill.name == skill_name).first()
+            if not db_skill:
+                db_skill = models.Skill(name=skill_name)
+                db.add(db_skill)
+                db.commit()
+                db.refresh(db_skill)
+            doc.skills.append(db_skill)
+
+    db.commit()
+    db.refresh(doc)
+
+    doc_search_text = f"{doc.filename} {doc.category} {doc.summary} {doc.extracted_text} " + " ".join([s.name for s in doc.skills])
+    local_index.index_document(doc.id, doc_search_text)
+    rebuild_all_relationships(db)
+
+    return {
+        "id": doc.id,
+        "filename": doc.filename,
+        "category": doc.category,
+        "year": doc.year,
+        "summary": doc.summary,
+        "file_path": doc.file_path,
+        "extracted_text": doc.extracted_text,
+        "skills": [s.name for s in doc.skills]
     }
 
 # Retrieve Documents List

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
+import { API_URL } from '../api'
 
 const NODE_COLORS = {
   Resume:         { fill: '#00f2fe', glow: 'rgba(0,242,254,0.5)' },
@@ -35,7 +36,7 @@ export default function KnowledgeGraph({ documents }) {
 
   const fetchGraph = useCallback(async () => {
     try {
-      const res = await fetch('/api/graph')
+      const res = await fetch(`${API_URL}/api/graph`)
       const data = await res.json()
       const { nodes: rawNodes, links: rawLinks } = data
 

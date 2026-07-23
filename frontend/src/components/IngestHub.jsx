@@ -1,4 +1,5 @@
 import { useState, useRef } from 'react'
+import { API_URL } from '../api'
 
 const PIPELINE_STEPS = [
   { id: 'step-extract', label: 'OCR & Text Extraction',               icon: 'fa-file-magnifying-glass' },
@@ -30,12 +31,15 @@ export default function IngestHub({ geminiKey, onDocumentAdded, onViewDoc, docum
   const [pendingDoc, setPendingDoc] = useState(null)
   const fileInputRef = useRef()
 
+  const [errorMessage, setErrorMessage] = useState('')
+
   const runPipeline = async (file) => {
     setProcessing(true)
     setQueueStatus('Processing')
     setCurrentStep(0)
+    setErrorMessage('')
 
-    const delays = [900, 750, 700, 600]
+    const delays = [400, 400, 400, 300]
     for (let i = 0; i < PIPELINE_STEPS.length; i++) {
       setCurrentStep(i)
       await new Promise(r => setTimeout(r, delays[i]))
@@ -46,28 +50,47 @@ export default function IngestHub({ geminiKey, onDocumentAdded, onViewDoc, docum
     formData.append('file', file)
     if (geminiKey) formData.append('gemini_key', geminiKey)
 
+    const headers = {}
+    if (geminiKey) headers['X-Gemini-Key'] = geminiKey
+    const token = sessionStorage.getItem('mv_auth_token')
+    if (token) headers['Authorization'] = `Bearer ${token}`
+
     try {
-      const res = await fetch('/api/documents/upload', { method: 'POST', body: formData })
-      if (!res.ok) throw new Error('Upload failed')
-      const doc = await res.json()
+      const res = await fetch(`${API_URL}/api/documents/upload`, {
+        method: 'POST',
+        headers,
+        body: formData
+      })
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}))
+        throw new Error(errData.detail || `Upload failed with status ${res.status}`)
+      }
+      const rawRes = await res.json()
+      const doc = rawRes.document || rawRes
       setCurrentStep(PIPELINE_STEPS.length)
       setQueueStatus('Idle')
       setProcessing(false)
-      // Show metadata confirm modal
-      setPendingDoc({
+
+      // Set metadata confirm modal
+      const pending = {
         id: doc.id,
-        title: doc.filename,
-        category: doc.category || 'Projects',
+        title: doc.filename || file.name,
+        filename: doc.filename || file.name,
+        category: doc.category || 'Project',
         year: doc.year || new Date().getFullYear(),
-        skills: (doc.skills || []).join(', '),
+        skills: Array.isArray(doc.skills) ? doc.skills.join(', ') : (doc.skills || ''),
         content: doc.extracted_text || '',
+        file_path: doc.file_path || null,
+        summary: doc.summary || '',
         ...doc,
-      })
+      }
+      setPendingDoc(pending)
       setShowModal(true)
     } catch (err) {
       setQueueStatus('Error')
       setProcessing(false)
       setCurrentStep(-1)
+      setErrorMessage(err.message || 'File upload failed. Please check the file and try again.')
       console.error(err)
     }
   }
@@ -96,17 +119,27 @@ export default function IngestHub({ geminiKey, onDocumentAdded, onViewDoc, docum
       skills:   updatedSkills,
       content:  document.getElementById('edit-content').value,
     }
-    try {
-      const res = await fetch(`/api/documents/${pendingDoc.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      })
-      const updated = res.ok ? await res.json() : { ...pendingDoc, ...payload }
-      onDocumentAdded(updated)
-    } catch {
-      onDocumentAdded({ ...pendingDoc, ...payload })
+
+    if (pendingDoc.id) {
+      const token = sessionStorage.getItem('mv_auth_token')
+      const headers = { 'Content-Type': 'application/json' }
+      if (token) headers['Authorization'] = `Bearer ${token}`
+
+      try {
+        const res = await fetch(`${API_URL}/api/documents/${pendingDoc.id}`, {
+          method: 'PATCH',
+          headers,
+          body: JSON.stringify(payload),
+        })
+        const updated = res.ok ? await res.json() : { ...pendingDoc, ...payload, skills: updatedSkills }
+        onDocumentAdded(updated)
+      } catch {
+        onDocumentAdded({ ...pendingDoc, ...payload, skills: updatedSkills })
+      }
+    } else {
+      onDocumentAdded({ ...pendingDoc, ...payload, skills: updatedSkills })
     }
+
     setShowModal(false)
     setPendingDoc(null)
   }
@@ -114,18 +147,30 @@ export default function IngestHub({ geminiKey, onDocumentAdded, onViewDoc, docum
   const handleAddUrl = async () => {
     const url = document.getElementById('portfolioUrl').value.trim()
     if (!url) return
+    setErrorMessage('')
+    const token = sessionStorage.getItem('mv_auth_token')
+    const headers = { 'Content-Type': 'application/json' }
+    if (token) headers['Authorization'] = `Bearer ${token}`
+    if (geminiKey) headers['X-Gemini-Key'] = geminiKey
+
     try {
-      const res = await fetch('/api/documents/url', {
+      const res = await fetch(`${API_URL}/api/documents/url`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({ url }),
       })
       if (res.ok) {
-        const doc = await res.json()
+        const rawRes = await res.json()
+        const doc = rawRes.document || rawRes
         onDocumentAdded(doc)
         document.getElementById('portfolioUrl').value = ''
+      } else {
+        const errData = await res.json().catch(() => ({}))
+        setErrorMessage(errData.detail || 'Failed to ingest URL')
       }
-    } catch { /* ignore */ }
+    } catch {
+      setErrorMessage('Cannot connect to backend server')
+    }
   }
 
   return (
@@ -140,6 +185,11 @@ export default function IngestHub({ geminiKey, onDocumentAdded, onViewDoc, docum
       <div className="ingest-grid">
         {/* Upload Card */}
         <div className="glass-card upload-card">
+          {errorMessage && (
+            <div className="auth-error" style={{ marginBottom: 12 }}>
+              <i className="fa-solid fa-circle-exclamation" /> {errorMessage}
+            </div>
+          )}
           <div
             className={`upload-zone${dragging ? ' drag-over' : ''}`}
             onClick={() => fileInputRef.current?.click()}
